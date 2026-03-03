@@ -97,14 +97,29 @@ fn confirm_and_apply(
     std::io::stdout().flush().ok();
 
     terminal::enable_raw_mode()?;
-    let apply = loop {
+    let apply = 'outer: loop {
         if let Ok(Event::Key(key)) = event::read() {
             if key.kind != KeyEventKind::Press {
                 continue;
             }
             match (key.code, key.modifiers) {
                 (KeyCode::Char('y'), KeyModifiers::NONE)
-                | (KeyCode::Char('Y'), KeyModifiers::NONE) => break true,
+                | (KeyCode::Char('Y'), KeyModifiers::NONE) => {
+                    // echo 'y' and wait for Enter to confirm
+                    print!("y");
+                    std::io::stdout().flush().ok();
+                    loop {
+                        if let Ok(Event::Key(key2)) = event::read() {
+                            if key2.kind != KeyEventKind::Press {
+                                continue;
+                            }
+                            match key2.code {
+                                KeyCode::Enter => break 'outer true,
+                                _ => break 'outer false,
+                            }
+                        }
+                    }
+                }
                 (KeyCode::Char('c'), KeyModifiers::CONTROL)
                 | (KeyCode::Esc, _)
                 | (KeyCode::Enter, _)
