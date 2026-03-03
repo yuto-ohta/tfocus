@@ -8,7 +8,6 @@ use std::sync::Arc;
 use crate::cli::Operation;
 use crate::display::Display;
 use crate::error::{Result, TfocusError};
-use crate::selector::{SelectItem, Selector};
 use crate::types::Resource;
 
 /// Stores the child process ID for signal handling
@@ -90,32 +89,41 @@ fn confirm_and_apply(
     working_dir: &Path,
     running: Arc<AtomicBool>,
 ) -> Result<()> {
-    Display::print_header("Apply these changes?");
+    use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+    use crossterm::terminal;
+    use std::io::Write;
 
-    let items = vec![
-        SelectItem {
-            display: "Yes - Apply the planned changes".to_string(),
-            search_text: "yes apply execute confirm".to_string(),
-            data: "yes".to_string(),
-        },
-        SelectItem {
-            display: "No  - Cancel".to_string(),
-            search_text: "no cancel".to_string(),
-            data: "no".to_string(),
-        },
-    ];
+    print!("\nApply these changes? [y/N]: ");
+    std::io::stdout().flush().ok();
 
-    let mut selector = Selector::new(items);
-    match selector.run()? {
-        Some(input) if input == "yes" => {
-            execute_terraform_command(&Operation::Apply, target_options, working_dir, running)?;
-            Ok(())
+    terminal::enable_raw_mode()?;
+    let apply = loop {
+        if let Ok(Event::Key(key)) = event::read() {
+            if key.kind != KeyEventKind::Press {
+                continue;
+            }
+            match (key.code, key.modifiers) {
+                (KeyCode::Char('y'), KeyModifiers::NONE)
+                | (KeyCode::Char('Y'), KeyModifiers::NONE) => break true,
+                (KeyCode::Char('c'), KeyModifiers::CONTROL)
+                | (KeyCode::Esc, _)
+                | (KeyCode::Enter, _)
+                | (KeyCode::Char('n'), _)
+                | (KeyCode::Char('N'), _) => break false,
+                _ => {}
+            }
         }
-        _ => {
-            println!("\nOperation cancelled");
-            std::process::exit(0);
-        }
+    };
+    terminal::disable_raw_mode()?;
+    println!();
+
+    if apply {
+        execute_terraform_command(&Operation::Apply, target_options, working_dir, running)?;
+    } else {
+        println!("\nOperation cancelled");
+        std::process::exit(0);
     }
+    Ok(())
 }
 
 /// Executes the Terraform command with the specified options
