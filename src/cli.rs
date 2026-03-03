@@ -12,6 +12,10 @@ pub struct Cli {
     #[arg(short, long)]
     pub operation: Option<Operation>,
 
+    /// Filter selection by type (file, module)
+    #[arg(short = 't', long = "type")]
+    pub selection_type: Option<SelectionType>,
+
     /// Enable verbose output
     #[arg(short, long)]
     pub verbose: bool,
@@ -19,6 +23,12 @@ pub struct Cli {
     /// Non-interactive mode
     #[arg(short, long)]
     pub non_interactive: bool,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum SelectionType {
+    File,
+    Module,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]

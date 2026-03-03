@@ -9,7 +9,7 @@ mod types;
 use clap::Parser;
 use std::path::Path;
 
-use crate::cli::Cli;
+use crate::cli::{Cli, SelectionType};
 use crate::display::Display;
 use crate::error::{Result, TfocusError};
 use crate::project::TerraformProject;
@@ -107,19 +107,25 @@ fn main() -> Result<()> {
     let mut selection_items = Vec::new();
     let mut current_index = 1;
 
+    let stype = cli.selection_type;
+
     // add files
-    for file in project.get_unique_files() {
-        selection_items.push(SelectionItem::File(current_index, file));
-        current_index += 1;
+    if matches!(stype, None | Some(SelectionType::File)) {
+        for file in project.get_unique_files() {
+            selection_items.push(SelectionItem::File(current_index, file));
+            current_index += 1;
+        }
     }
 
     // add modules
-    for module in project.get_modules() {
-        selection_items.push(SelectionItem::Module(current_index, module));
-        current_index += 1;
+    if matches!(stype, None | Some(SelectionType::Module)) {
+        for module in project.get_modules() {
+            selection_items.push(SelectionItem::Module(current_index, module));
+            current_index += 1;
+        }
     }
 
-    // add resources
+    // add resources (always shown)
     for resource in project.get_all_resources() {
         selection_items.push(SelectionItem::Resource(current_index, resource));
         current_index += 1;
