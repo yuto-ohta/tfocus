@@ -11,9 +11,6 @@ pub enum TfocusError {
     #[error("Invalid target number selected")]
     InvalidTargetSelection,
 
-    #[error("Invalid operation selected: {0}")]
-    InvalidOperation(String),
-
     #[error("Terraform command failed: {0}")]
     TerraformError(String),
 

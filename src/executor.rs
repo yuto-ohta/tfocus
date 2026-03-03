@@ -18,17 +18,15 @@ static mut CHILD_PID: Option<u32> = None;
 pub fn execute_with_resources(resources: &[Resource]) -> Result<()> {
     let running = setup_signal_handler()?;
     let target_options = create_target_options(resources)?;
-    let operation = select_operation()?;
     let working_dir = get_working_directory(resources)?;
 
-    let result =
-        execute_terraform_command(&operation, &target_options, working_dir, running.clone())?;
+    // Always run plan first
+    let plan_succeeded =
+        execute_terraform_command(&Operation::Plan, &target_options, working_dir, running.clone())?;
 
-    // If plan was successful, suggest terraform apply with the same targets
-    if result && matches!(operation, Operation::Plan) {
-        Display::print_header("\nTo apply these changes, run:");
-        let terraform_command = format!("terraform apply {}", target_options.join(" "));
-        println!("  {}", terraform_command);
+    // Only show apply confirmation if plan succeeded
+    if plan_succeeded {
+        confirm_and_apply(&target_options, working_dir, running)?;
     }
 
     Ok(())
@@ -78,43 +76,46 @@ fn create_target_options(resources: &[Resource]) -> Result<Vec<String>> {
     Ok(target_options)
 }
 
-/// Prompts the user to select an operation (plan or apply)
-fn select_operation() -> Result<Operation> {
-    Display::print_header("Select operation:");
-
-    let items = vec![
-        SelectItem {
-            display: "plan  - Show changes to be made".to_string(),
-            search_text: "plan terraform show changes".to_string(),
-            data: "1".to_string(),
-        },
-        SelectItem {
-            display: "apply - Execute the planned changes".to_string(),
-            search_text: "apply terraform execute changes".to_string(),
-            data: "2".to_string(),
-        },
-    ];
-
-    let mut selector = Selector::new(items);
-    match selector.run()? {
-        Some(input) => match input.as_str() {
-            "1" => Ok(Operation::Plan),
-            "2" => Ok(Operation::Apply),
-            _ => Err(TfocusError::InvalidOperation(input)),
-        },
-        None => {
-            println!("\nOperation cancelled");
-            std::process::exit(0);
-        }
-    }
-}
-
 /// Gets the working directory from the first resource
 fn get_working_directory(resources: &[Resource]) -> Result<&Path> {
     resources
         .first()
         .map(|r| r.file_path.parent().unwrap_or(Path::new(".")))
         .ok_or_else(|| TfocusError::ParseError("No resources specified".to_string()))
+}
+
+/// Prompts the user to confirm and apply the planned changes
+fn confirm_and_apply(
+    target_options: &[String],
+    working_dir: &Path,
+    running: Arc<AtomicBool>,
+) -> Result<()> {
+    Display::print_header("Apply these changes?");
+
+    let items = vec![
+        SelectItem {
+            display: "Yes - Apply the planned changes".to_string(),
+            search_text: "yes apply execute confirm".to_string(),
+            data: "yes".to_string(),
+        },
+        SelectItem {
+            display: "No  - Cancel".to_string(),
+            search_text: "no cancel".to_string(),
+            data: "no".to_string(),
+        },
+    ];
+
+    let mut selector = Selector::new(items);
+    match selector.run()? {
+        Some(input) if input == "yes" => {
+            execute_terraform_command(&Operation::Apply, target_options, working_dir, running)?;
+            Ok(())
+        }
+        _ => {
+            println!("\nOperation cancelled");
+            std::process::exit(0);
+        }
+    }
 }
 
 /// Executes the Terraform command with the specified options
