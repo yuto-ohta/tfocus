@@ -26,6 +26,40 @@ enum SelectionItem {
     Resource(usize, Resource),
 }
 
+fn build_selection_items(
+    selection_type: Option<SelectionType>,
+    files: Vec<std::path::PathBuf>,
+    modules: Vec<String>,
+    resources: Vec<Resource>,
+) -> Vec<SelectionItem> {
+    let mut selection_items = Vec::new();
+    let mut current_index = 1;
+
+    if matches!(selection_type, None | Some(SelectionType::File)) {
+        for file in files {
+            selection_items.push(SelectionItem::File(current_index, file));
+            current_index += 1;
+        }
+    }
+
+    if matches!(selection_type, None | Some(SelectionType::Module)) {
+        for module in modules {
+            selection_items.push(SelectionItem::Module(current_index, module));
+            current_index += 1;
+        }
+    }
+
+    // When --type is provided, narrow the list to the specified type only.
+    if selection_type.is_none() {
+        for resource in resources {
+            selection_items.push(SelectionItem::Resource(current_index, resource));
+            current_index += 1;
+        }
+    }
+
+    selection_items
+}
+
 fn create_selection_items(selection_items: &[SelectionItem]) -> Vec<SelectItem> {
     selection_items
         .iter()
@@ -215,33 +249,12 @@ fn main() -> Result<()> {
         Err(e) => return Err(e),
     };
 
-    // Collect all targets
-    let mut selection_items = Vec::new();
-    let mut current_index = 1;
-
-    let stype = cli.selection_type;
-
-    // add files
-    if matches!(stype, None | Some(SelectionType::File)) {
-        for file in project.get_unique_files() {
-            selection_items.push(SelectionItem::File(current_index, file));
-            current_index += 1;
-        }
-    }
-
-    // add modules
-    if matches!(stype, None | Some(SelectionType::Module)) {
-        for module in project.get_modules() {
-            selection_items.push(SelectionItem::Module(current_index, module));
-            current_index += 1;
-        }
-    }
-
-    // add resources (always shown)
-    for resource in project.get_all_resources() {
-        selection_items.push(SelectionItem::Resource(current_index, resource));
-        current_index += 1;
-    }
+    let selection_items = build_selection_items(
+        cli.selection_type,
+        project.get_unique_files(),
+        project.get_modules(),
+        project.get_all_resources(),
+    );
 
     // Initialize and run the selector
     let selector_items = create_selection_items(&selection_items);
@@ -302,6 +315,68 @@ mod tests {
             has_for_each: false,
             index: None,
         }
+    }
+
+    fn count_selection_types(selection_items: &[SelectionItem]) -> (usize, usize, usize) {
+        let file_count = selection_items
+            .iter()
+            .filter(|item| matches!(item, SelectionItem::File(_, _)))
+            .count();
+        let module_count = selection_items
+            .iter()
+            .filter(|item| matches!(item, SelectionItem::Module(_, _)))
+            .count();
+        let resource_count = selection_items
+            .iter()
+            .filter(|item| matches!(item, SelectionItem::Resource(_, _)))
+            .count();
+
+        (file_count, module_count, resource_count)
+    }
+
+    #[test]
+    fn test_build_selection_items_without_type_includes_all() {
+        let selection_items = build_selection_items(
+            None,
+            vec![PathBuf::from("/tmp/main.tf")],
+            vec!["vpc".to_string()],
+            vec![create_resource("web", "/tmp/main.tf")],
+        );
+
+        let (file_count, module_count, resource_count) = count_selection_types(&selection_items);
+        assert_eq!(file_count, 1);
+        assert_eq!(module_count, 1);
+        assert_eq!(resource_count, 1);
+    }
+
+    #[test]
+    fn test_build_selection_items_with_file_type_hides_modules_and_resources() {
+        let selection_items = build_selection_items(
+            Some(SelectionType::File),
+            vec![PathBuf::from("/tmp/main.tf")],
+            vec!["vpc".to_string()],
+            vec![create_resource("web", "/tmp/main.tf")],
+        );
+
+        let (file_count, module_count, resource_count) = count_selection_types(&selection_items);
+        assert_eq!(file_count, 1);
+        assert_eq!(module_count, 0);
+        assert_eq!(resource_count, 0);
+    }
+
+    #[test]
+    fn test_build_selection_items_with_module_type_hides_files_and_resources() {
+        let selection_items = build_selection_items(
+            Some(SelectionType::Module),
+            vec![PathBuf::from("/tmp/main.tf")],
+            vec!["vpc".to_string()],
+            vec![create_resource("web", "/tmp/main.tf")],
+        );
+
+        let (file_count, module_count, resource_count) = count_selection_types(&selection_items);
+        assert_eq!(file_count, 0);
+        assert_eq!(module_count, 1);
+        assert_eq!(resource_count, 0);
     }
 
     #[test]

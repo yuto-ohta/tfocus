@@ -51,6 +51,19 @@ tfocus
 When you choose `apply`, tfocus runs `terraform apply` once without `-auto-approve`.
 Terraform will ask for confirmation in the usual way.
 
+## Selection Type Filter
+
+Use `-t` / `--type` to narrow the selection list shown in the UI.
+
+```bash
+tfocus -t file
+tfocus --type module
+```
+
+- `-t file`: show only `[File]` entries
+- `-t module`: show only `[Module]` entries
+- no `-t`: show `[File]`, `[Module]`, and `[Resource]` entries
+
 ## Operation Selection
 
 After selecting resources, tfocus prompts:
