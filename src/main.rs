@@ -164,24 +164,14 @@ fn validate_single_working_directory(resources: &[Resource]) -> Result<()> {
     ))
 }
 
-fn parse_operation_choice(choice: &str) -> Result<Operation> {
-    match choice.trim() {
-        "1" => Ok(Operation::Plan),
-        "2" => Ok(Operation::Apply),
-        _ => Err(TfocusError::ParseError(
-            "Invalid operation selected".to_string(),
-        )),
-    }
-}
-
 fn prompt_operation_selection() -> Result<Operation> {
     Display::print_header("Select operation:");
-    println!("  1) plan");
-    println!("  2) apply");
+    println!("  p) plan");
+    println!("  a) apply");
+    println!("  Press p/a to confirm, Esc/Ctrl+C to cancel");
 
     let mut input = InputHandler::new()?;
-    let selected = input.read_operation()?;
-    parse_operation_choice(&selected)
+    input.read_operation()
 }
 
 fn resolve_operation_with_prompt<F>(

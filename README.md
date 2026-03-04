@@ -57,12 +57,14 @@ After selecting resources, tfocus prompts:
 
 ```text
 Select operation:
-  1) plan
-  2) apply
+  p) plan
+  a) apply
+  Press p/a to confirm, Esc/Ctrl+C to cancel
 ```
 
-- `1) plan`: runs `terraform plan` with selected `-target` options
-- `2) apply`: runs `terraform apply` with selected `-target` options and Terraform's own confirmation flow
+- `p) plan`: runs `terraform plan` with selected `-target` options
+- `a) apply`: runs `terraform apply` with selected `-target` options and Terraform's own confirmation flow
+- `Esc`/`Ctrl+C`: cancels operation selection immediately
 
 ## Non-Interactive Mode
 
