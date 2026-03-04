@@ -46,12 +46,7 @@ impl InputHandler {
     }
 
     pub fn read_operation(&mut self) -> Result<String> {
-        loop {
-            let input = self.read_line("\nEnter option (1 or 2): ")?;
-            match input.trim() {
-                "1" | "2" => return Ok(input),
-                _ => println!("Please enter 1 for plan or 2 for apply"),
-            }
-        }
+        let selection = self.read_number("\nEnter option (1 or 2): ", 2)?;
+        Ok(selection.to_string())
     }
 }

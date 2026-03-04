@@ -2,6 +2,7 @@ mod cli;
 mod display;
 mod error;
 mod executor;
+mod input;
 mod project;
 mod selector;
 mod types;
@@ -10,9 +11,10 @@ use clap::Parser;
 use std::collections::{BTreeSet, HashSet};
 use std::path::Path;
 
-use crate::cli::{Cli, SelectionType};
+use crate::cli::{Cli, Operation, SelectionType};
 use crate::display::Display;
 use crate::error::{Result, TfocusError};
+use crate::input::InputHandler;
 use crate::project::TerraformProject;
 use crate::selector::{SelectItem, Selector};
 use crate::types::{Resource, Target};
@@ -162,6 +164,47 @@ fn validate_single_working_directory(resources: &[Resource]) -> Result<()> {
     ))
 }
 
+fn parse_operation_choice(choice: &str) -> Result<Operation> {
+    match choice.trim() {
+        "1" => Ok(Operation::Plan),
+        "2" => Ok(Operation::Apply),
+        _ => Err(TfocusError::ParseError(
+            "Invalid operation selected".to_string(),
+        )),
+    }
+}
+
+fn prompt_operation_selection() -> Result<Operation> {
+    Display::print_header("Select operation:");
+    println!("  1) plan");
+    println!("  2) apply");
+
+    let mut input = InputHandler::new()?;
+    let selected = input.read_operation()?;
+    parse_operation_choice(&selected)
+}
+
+fn resolve_operation_with_prompt<F>(
+    operation: Option<Operation>,
+    non_interactive: bool,
+    mut prompt: F,
+) -> Result<Operation>
+where
+    F: FnMut() -> Result<Operation>,
+{
+    if let Some(operation) = operation {
+        return Ok(operation);
+    }
+
+    if non_interactive {
+        return Err(TfocusError::ParseError(
+            "In --non-interactive mode, --operation must be specified (plan or apply)".to_string(),
+        ));
+    }
+
+    prompt()
+}
+
 fn main() -> Result<()> {
     // setting env
     env_logger::init();
@@ -245,8 +288,13 @@ fn main() -> Result<()> {
     }
 
     println!();
+    let operation = resolve_operation_with_prompt(cli.operation, cli.non_interactive, || {
+        prompt_operation_selection()
+    })?;
+
+    println!();
     // Execute the selected resources
-    executor::execute_with_resources(&resources)
+    executor::execute_with_resources(&resources, operation)
 }
 
 #[cfg(test)]
@@ -343,5 +391,34 @@ mod tests {
             result,
             Err(TfocusError::MixedWorkingDirectories(_))
         ));
+    }
+
+    #[test]
+    fn test_resolve_operation_prefers_cli_option_without_prompt() {
+        let mut prompted = false;
+        let operation = resolve_operation_with_prompt(Some(Operation::Apply), false, || {
+            prompted = true;
+            Ok(Operation::Plan)
+        })
+        .unwrap();
+
+        assert!(matches!(operation, Operation::Apply));
+        assert!(!prompted);
+    }
+
+    #[test]
+    fn test_resolve_operation_requires_operation_in_non_interactive_mode() {
+        let result = resolve_operation_with_prompt(None, true, || Ok(Operation::Plan));
+
+        assert!(
+            matches!(result, Err(TfocusError::ParseError(message)) if message.contains("--operation must be specified"))
+        );
+    }
+
+    #[test]
+    fn test_resolve_operation_prompts_when_interactive_and_no_cli_option() {
+        let operation = resolve_operation_with_prompt(None, false, || Ok(Operation::Plan)).unwrap();
+
+        assert!(matches!(operation, Operation::Plan));
     }
 }

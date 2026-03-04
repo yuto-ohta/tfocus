@@ -45,7 +45,33 @@ tfocus
 
 1. 🔍 Launch the fuzzy-search UI
 2. ⌨️ Mark one or more resources using vim-like keybindings
-3. 🎯 Execute plan/apply on selected resources
+3. 🎯 Choose operation (`plan` or `apply`) after selection
+4. ✅ For `apply`, confirm directly in Terraform's standard prompt
+
+When you choose `apply`, tfocus runs `terraform apply` once without `-auto-approve`.
+Terraform will ask for confirmation in the usual way.
+
+## Operation Selection
+
+After selecting resources, tfocus prompts:
+
+```text
+Select operation:
+  1) plan
+  2) apply
+```
+
+- `1) plan`: runs `terraform plan` with selected `-target` options
+- `2) apply`: runs `terraform apply` with selected `-target` options and Terraform's own confirmation flow
+
+## Non-Interactive Mode
+
+In `--non-interactive` mode, `--operation` is required.
+
+```bash
+tfocus --non-interactive --operation plan
+tfocus --non-interactive --operation apply
+```
 
 ## Keybindings 🎹
 

@@ -15,19 +15,12 @@ use crate::types::Resource;
 static mut CHILD_PID: Option<u32> = None;
 
 /// Main entry point for executing Terraform commands on selected resources
-pub fn execute_with_resources(resources: &[Resource]) -> Result<()> {
+pub fn execute_with_resources(resources: &[Resource], operation: Operation) -> Result<()> {
     let running = setup_signal_handler()?;
     let target_options = create_target_options(resources)?;
     let working_dir = get_working_directory(resources)?;
 
-    // Always run plan first
-    let plan_succeeded =
-        execute_terraform_command(&Operation::Plan, &target_options, working_dir, running.clone())?;
-
-    // Only show apply confirmation if plan succeeded
-    if plan_succeeded {
-        confirm_and_apply(&target_options, working_dir, running)?;
-    }
+    let _ = execute_terraform_command(&operation, &target_options, working_dir, running)?;
 
     Ok(())
 }
@@ -84,7 +77,9 @@ fn create_target_options(resources: &[Resource]) -> Result<Vec<String>> {
 /// Gets the working directory from the first resource
 fn get_working_directory(resources: &[Resource]) -> Result<&Path> {
     if resources.is_empty() {
-        return Err(TfocusError::ParseError("No resources specified".to_string()));
+        return Err(TfocusError::ParseError(
+            "No resources specified".to_string(),
+        ));
     }
 
     let unique_dirs: BTreeSet<_> = resources
@@ -110,62 +105,21 @@ fn get_working_directory(resources: &[Resource]) -> Result<&Path> {
         .ok_or_else(|| TfocusError::ParseError("No resources specified".to_string()))
 }
 
-/// Prompts the user to confirm and apply the planned changes
-fn confirm_and_apply(
+fn build_command_display(
+    terraform_binary: &str,
+    operation: &Operation,
     target_options: &[String],
-    working_dir: &Path,
-    running: Arc<AtomicBool>,
-) -> Result<()> {
-    use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
-    use crossterm::terminal;
-    use std::io::Write;
-
-    print!("\nApply these changes? [y/N]: ");
-    std::io::stdout().flush().ok();
-
-    terminal::enable_raw_mode()?;
-    let apply = 'outer: loop {
-        if let Ok(Event::Key(key)) = event::read() {
-            if key.kind != KeyEventKind::Press {
-                continue;
-            }
-            match (key.code, key.modifiers) {
-                (KeyCode::Char('y'), KeyModifiers::NONE)
-                | (KeyCode::Char('Y'), KeyModifiers::NONE) => {
-                    // echo 'y' and wait for Enter to confirm
-                    print!("y");
-                    std::io::stdout().flush().ok();
-                    loop {
-                        if let Ok(Event::Key(key2)) = event::read() {
-                            if key2.kind != KeyEventKind::Press {
-                                continue;
-                            }
-                            match key2.code {
-                                KeyCode::Enter => break 'outer true,
-                                _ => break 'outer false,
-                            }
-                        }
-                    }
-                }
-                (KeyCode::Char('c'), KeyModifiers::CONTROL)
-                | (KeyCode::Esc, _)
-                | (KeyCode::Enter, _)
-                | (KeyCode::Char('n'), _)
-                | (KeyCode::Char('N'), _) => break false,
-                _ => {}
-            }
-        }
-    };
-    terminal::disable_raw_mode()?;
-    println!();
-
-    if apply {
-        execute_terraform_command(&Operation::Apply, target_options, working_dir, running)?;
+) -> String {
+    if target_options.is_empty() {
+        format!("{} {}", terraform_binary, operation)
     } else {
-        println!("\nOperation cancelled");
-        std::process::exit(0);
+        format!(
+            "{} {} {}",
+            terraform_binary,
+            operation,
+            target_options.join(" ")
+        )
     }
-    Ok(())
 }
 
 /// Executes the Terraform command with the specified options
@@ -185,21 +139,7 @@ fn execute_terraform_command(
         command.arg(target);
     }
 
-    if matches!(operation, Operation::Apply) {
-        command.arg("-auto-approve");
-    }
-
-    let command_str = format!(
-        "{} {} {}",
-        terraform_binary,
-        operation,
-        target_options.join(" "),
-    );
-    let command_str = if matches!(operation, Operation::Apply) {
-        format!("{} -auto-approve", command_str)
-    } else {
-        command_str
-    };
+    let command_str = build_command_display(&terraform_binary, operation, target_options);
 
     Display::print_command(&command_str);
     debug!(
@@ -328,5 +268,28 @@ mod tests {
             result,
             Err(TfocusError::MixedWorkingDirectories(_))
         ));
+    }
+
+    #[test]
+    fn test_build_command_display_for_plan() {
+        let command = build_command_display(
+            "terraform",
+            &Operation::Plan,
+            &["-target=aws_instance.web".to_string()],
+        );
+
+        assert_eq!(command, "terraform plan -target=aws_instance.web");
+    }
+
+    #[test]
+    fn test_build_command_display_for_apply_does_not_include_auto_approve() {
+        let command = build_command_display(
+            "terraform",
+            &Operation::Apply,
+            &["-target=aws_instance.web".to_string()],
+        );
+
+        assert_eq!(command, "terraform apply -target=aws_instance.web");
+        assert!(!command.contains("-auto-approve"));
     }
 }
