@@ -20,6 +20,7 @@ pub struct Selector {
     items: Vec<SelectItem>,
     query: String,
     selected: usize,
+    marked_items: Vec<usize>,
     filtered_items: Vec<usize>,
     matcher: SkimMatcherV2,
     window_size: usize,
@@ -32,6 +33,7 @@ impl Selector {
             items,
             query: String::new(),
             selected: 0,
+            marked_items: Vec::new(),
             filtered_items,
             matcher: SkimMatcherV2::default(),
             window_size: 15,
@@ -56,6 +58,30 @@ impl Selector {
         self.selected = self
             .selected
             .min(self.filtered_items.len().saturating_sub(1));
+    }
+
+    fn toggle_current_selection(&mut self) {
+        if let Some(&idx) = self.filtered_items.get(self.selected) {
+            if let Some(position) = self.marked_items.iter().position(|&i| i == idx) {
+                self.marked_items.remove(position);
+            } else {
+                self.marked_items.push(idx);
+            }
+        }
+    }
+
+    fn collect_selected_data(&self) -> Option<Vec<String>> {
+        if self.marked_items.is_empty() {
+            let idx = *self.filtered_items.get(self.selected)?;
+            return Some(vec![self.items[idx].data.clone()]);
+        }
+
+        let data = self
+            .marked_items
+            .iter()
+            .map(|&idx| self.items[idx].data.clone())
+            .collect();
+        Some(data)
     }
 
     fn get_terminal_size() -> (u16, u16) {
@@ -95,11 +121,17 @@ impl Selector {
         for i in start..end {
             let item_idx = self.filtered_items[i];
             let item = &self.items[item_idx];
+            let mark = if self.marked_items.contains(&item_idx) {
+                "✔"
+            } else {
+                " "
+            };
 
             if i == self.selected {
                 execute!(
                     stdout,
                     style::PrintStyledContent("▶ ".green()),
+                    style::PrintStyledContent(format!("[{}] ", mark).green()),
                     style::PrintStyledContent(item.display.clone().green()),
                     cursor::MoveToNextLine(1)
                 )?;
@@ -107,6 +139,7 @@ impl Selector {
                 execute!(
                     stdout,
                     style::Print("  "),
+                    style::Print(format!("[{}] ", mark)),
                     style::Print(&item.display),
                     cursor::MoveToNextLine(1)
                 )?;
@@ -124,13 +157,18 @@ impl Selector {
         }
 
         // ステータスラインの表示
-        let status = format!("{}/{} items", self.filtered_items.len(), self.items.len());
-        let help = "[↑/k]Up [↓/j]Down [Enter]Select [Esc/Ctrl+C]Cancel";
+        let status = format!(
+            "{}/{} items | {} selected",
+            self.filtered_items.len(),
+            self.items.len(),
+            self.marked_items.len()
+        );
+        let help = "[↑/k]Up [↓/j]Down [Space]Toggle [Enter]Confirm [Esc/Ctrl+C]Cancel";
 
         execute!(
             stdout,
             style::Print(&status),
-            cursor::MoveToColumn(term_width - help.len() as u16),
+            cursor::MoveToColumn(term_width.saturating_sub(help.len() as u16)),
             style::Print(help),
             cursor::MoveToNextLine(1)
         )?;
@@ -139,7 +177,7 @@ impl Selector {
         Ok(())
     }
 
-    pub fn run(&mut self) -> Result<Option<String>> {
+    pub fn run(&mut self) -> Result<Option<Vec<String>>> {
         terminal::enable_raw_mode()?;
         execute!(stdout(), terminal::EnterAlternateScreen, cursor::Hide)?;
 
@@ -151,7 +189,7 @@ impl Selector {
         result
     }
 
-    fn run_loop(&mut self) -> Result<Option<String>> {
+    fn run_loop(&mut self) -> Result<Option<Vec<String>>> {
         loop {
             self.render_screen()?;
 
@@ -162,9 +200,10 @@ impl Selector {
 
                 match (key.code, key.modifiers) {
                     (KeyCode::Enter, _) => {
-                        if let Some(&idx) = self.filtered_items.get(self.selected) {
-                            return Ok(Some(self.items[idx].data.clone()));
-                        }
+                        return Ok(self.collect_selected_data());
+                    }
+                    (KeyCode::Char(' '), KeyModifiers::NONE) => {
+                        self.toggle_current_selection();
                     }
                     (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
                         return Ok(None);

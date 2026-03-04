@@ -44,7 +44,7 @@ tfocus
 ```
 
 1. 🔍 Launch the fuzzy-search UI
-2. ⌨️ Select resources using vim-like keybindings
+2. ⌨️ Mark one or more resources using vim-like keybindings
 3. 🎯 Execute plan/apply on selected resources
 
 ## Keybindings 🎹
@@ -52,8 +52,11 @@ tfocus
 - `↑`/`k`: Move up
 - `↓`/`j`: Move down
 - `/`: Incremental search
-- `Enter`: Select
+- `Space`: Toggle selection
+- `Enter`: Confirm selection and execute
 - `Esc`/`Ctrl+C`: Cancel
+
+> ℹ️ Multiple selections are only supported when all selected resources are in the same directory.
 
 ## ⚠️ Important Warning ⚠️
 
@@ -94,11 +97,11 @@ This is an experimental tool. Use at your own risk!
 $ tfocus
 QUERY>
 
-▶    1 [File]     main.tf
-     2 [Module]   vpc
-     3 [Resource] aws_vpc.main
+[ ]    1 [File]     main.tf
+▶[✔]   2 [Module]   vpc
+ [✔]   3 [Resource] aws_vpc.main
 
-[↑/k]Up [↓/j]Down [Enter]Select [Esc/Ctrl+C]Cancel
+[↑/k]Up [↓/j]Down [Space]Toggle [Enter]Confirm [Esc/Ctrl+C]Cancel
 ```
 
 ## Contributing 🤝

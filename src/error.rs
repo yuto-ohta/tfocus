@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -22,6 +23,9 @@ pub enum TfocusError {
 
     #[error("Failed to execute terraform command: {0}")]
     CommandExecutionError(String),
+
+    #[error("Selected resources span multiple directories: {0:?}")]
+    MixedWorkingDirectories(Vec<PathBuf>),
 }
 
 pub type Result<T> = std::result::Result<T, TfocusError>;

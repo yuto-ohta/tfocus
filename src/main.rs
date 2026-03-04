@@ -7,6 +7,7 @@ mod selector;
 mod types;
 
 use clap::Parser;
+use std::collections::{BTreeSet, HashSet};
 use std::path::Path;
 
 use crate::cli::{Cli, SelectionType};
@@ -83,6 +84,84 @@ fn create_selection_items(selection_items: &[SelectionItem]) -> Vec<SelectItem> 
         .collect()
 }
 
+fn parse_selected_item(selected: &str) -> Result<Target> {
+    if let Some(stripped) = selected.strip_prefix("f:") {
+        let path = Path::new(stripped).to_path_buf();
+        Ok(Target::File(path))
+    } else if let Some(stripped) = selected.strip_prefix("m:") {
+        Ok(Target::Module(stripped.to_string()))
+    } else if let Some(stripped) = selected.strip_prefix("r:") {
+        let (resource_type, name) = stripped
+            .split_once('.')
+            .ok_or(TfocusError::InvalidTargetSelection)?;
+        Ok(Target::Resource(
+            resource_type.to_string(),
+            name.to_string(),
+        ))
+    } else {
+        Err(TfocusError::InvalidTargetSelection)
+    }
+}
+
+fn parse_selected_items(selected_items: &[String]) -> Result<Vec<Target>> {
+    selected_items
+        .iter()
+        .map(|item| parse_selected_item(item))
+        .collect()
+}
+
+fn collect_resources_for_target(project: &TerraformProject, target: &Target) -> Vec<Resource> {
+    match target {
+        Target::File(path) => project.get_resources_by_target(&Target::File(path.clone())),
+        Target::Module(name) => project.get_resources_by_target(&Target::Module(name.clone())),
+        Target::Resource(resource_type, name) => {
+            project.get_resources_by_target(&Target::Resource(resource_type.clone(), name.clone()))
+        }
+    }
+}
+
+fn deduplicate_resources(resources: Vec<Resource>) -> Vec<Resource> {
+    let mut seen_targets = HashSet::new();
+    let mut deduplicated = Vec::new();
+
+    for resource in resources {
+        let target = resource.target_string();
+        if seen_targets.insert(target) {
+            deduplicated.push(resource);
+        }
+    }
+
+    deduplicated
+}
+
+fn collect_selected_resources(project: &TerraformProject, targets: &[Target]) -> Vec<Resource> {
+    targets
+        .iter()
+        .flat_map(|target| collect_resources_for_target(project, target))
+        .collect()
+}
+
+fn validate_single_working_directory(resources: &[Resource]) -> Result<()> {
+    let unique_dirs: BTreeSet<_> = resources
+        .iter()
+        .map(|resource| {
+            resource
+                .file_path
+                .parent()
+                .unwrap_or(Path::new("."))
+                .to_path_buf()
+        })
+        .collect();
+
+    if unique_dirs.len() <= 1 {
+        return Ok(());
+    }
+
+    Err(TfocusError::MixedWorkingDirectories(
+        unique_dirs.into_iter().collect(),
+    ))
+}
+
 fn main() -> Result<()> {
     // setting env
     env_logger::init();
@@ -135,43 +214,30 @@ fn main() -> Result<()> {
     let selector_items = create_selection_items(&selection_items);
     let mut selector = Selector::new(selector_items);
 
-    let selected = match selector.run()? {
-        Some(data) => data,
+    let selected_items = match selector.run()? {
+        Some(data) if !data.is_empty() => data,
         None => {
             println!("\nOperation cancelled");
             std::process::exit(0);
         }
-    };
-
-    // Analysis of the selected item
-    let target = if let Some(stripped) = selected.strip_prefix("f:") {
-        let path = Path::new(stripped).to_path_buf();
-        Target::File(path)
-    } else if let Some(stripped) = selected.strip_prefix("m:") {
-        Target::Module(stripped.to_string())
-    } else if let Some(stripped) = selected.strip_prefix("r:") {
-        let parts: Vec<&str> = stripped.split('.').collect();
-        if parts.len() != 2 {
-            return Err(TfocusError::InvalidTargetSelection);
-        }
-        Target::Resource(parts[0].to_string(), parts[1].to_string())
-    } else {
-        return Err(TfocusError::InvalidTargetSelection);
-    };
-
-    // Get the resources for the selected target
-    let resources = match &target {
-        Target::File(path) => project.get_resources_by_target(&Target::File(path.clone())),
-        Target::Module(name) => project.get_resources_by_target(&Target::Module(name.clone())),
-        Target::Resource(resource_type, name) => {
-            project.get_resources_by_target(&Target::Resource(resource_type.clone(), name.clone()))
+        _ => {
+            println!("\nNo items selected");
+            std::process::exit(0);
         }
     };
 
-    if resources.is_empty() {
-        println!("\nNo resources found for the selected target.");
+    let targets = parse_selected_items(&selected_items)?;
+
+    // Get the resources for the selected targets
+    let selected_resources = collect_selected_resources(&project, &targets);
+
+    if selected_resources.is_empty() {
+        println!("\nNo resources found for the selected targets.");
         return Ok(());
     }
+
+    validate_single_working_directory(&selected_resources)?;
+    let resources = deduplicate_resources(selected_resources);
 
     Display::print_header("\nSelected resources:");
     for resource in &resources {
@@ -181,4 +247,101 @@ fn main() -> Result<()> {
     println!();
     // Execute the selected resources
     executor::execute_with_resources(&resources)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn create_resource(target_name: &str, file_path: &str) -> Resource {
+        Resource {
+            resource_type: "aws_instance".to_string(),
+            name: target_name.to_string(),
+            is_module: false,
+            file_path: PathBuf::from(file_path),
+            has_count: false,
+            has_for_each: false,
+            index: None,
+        }
+    }
+
+    #[test]
+    fn test_parse_selected_item_file() {
+        let target = parse_selected_item("f:/tmp/main.tf").unwrap();
+        assert_eq!(target, Target::File(PathBuf::from("/tmp/main.tf")));
+    }
+
+    #[test]
+    fn test_parse_selected_item_module() {
+        let target = parse_selected_item("m:vpc").unwrap();
+        assert_eq!(target, Target::Module("vpc".to_string()));
+    }
+
+    #[test]
+    fn test_parse_selected_item_resource() {
+        let target = parse_selected_item("r:aws_instance.web").unwrap();
+        assert_eq!(
+            target,
+            Target::Resource("aws_instance".to_string(), "web".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_selected_item_invalid_resource() {
+        let result = parse_selected_item("r:aws_instance");
+        assert!(matches!(result, Err(TfocusError::InvalidTargetSelection)));
+    }
+
+    #[test]
+    fn test_deduplicate_resources() {
+        let resources = vec![
+            create_resource("web", "/tmp/main.tf"),
+            create_resource("web", "/tmp/main.tf"),
+            create_resource("app", "/tmp/main.tf"),
+        ];
+
+        let deduplicated = deduplicate_resources(resources);
+        assert_eq!(deduplicated.len(), 2);
+        assert_eq!(deduplicated[0].target_string(), "aws_instance.web");
+        assert_eq!(deduplicated[1].target_string(), "aws_instance.app");
+    }
+
+    #[test]
+    fn test_validate_single_working_directory_same_directory() {
+        let resources = vec![
+            create_resource("web", "/tmp/a/main.tf"),
+            create_resource("app", "/tmp/a/network.tf"),
+        ];
+
+        assert!(validate_single_working_directory(&resources).is_ok());
+    }
+
+    #[test]
+    fn test_validate_single_working_directory_mixed_directories() {
+        let resources = vec![
+            create_resource("web", "/tmp/a/main.tf"),
+            create_resource("app", "/tmp/b/network.tf"),
+        ];
+
+        let result = validate_single_working_directory(&resources);
+        assert!(matches!(
+            result,
+            Err(TfocusError::MixedWorkingDirectories(_))
+        ));
+    }
+
+    #[test]
+    fn test_validate_single_working_directory_mixed_directories_with_same_target() {
+        let resources = vec![
+            create_resource("web", "/tmp/a/main.tf"),
+            create_resource("web", "/tmp/b/network.tf"),
+        ];
+
+        let result = validate_single_working_directory(&resources);
+        assert!(matches!(
+            result,
+            Err(TfocusError::MixedWorkingDirectories(_))
+        ));
+    }
 }

@@ -1,4 +1,5 @@
 use log::{debug, error};
+use std::collections::{BTreeSet, HashSet};
 use std::env;
 use std::path::Path;
 use std::process::Command;
@@ -63,10 +64,15 @@ fn setup_signal_handler() -> Result<Arc<AtomicBool>> {
 
 /// Creates target options for the Terraform command
 fn create_target_options(resources: &[Resource]) -> Result<Vec<String>> {
-    let target_options: Vec<String> = resources
-        .iter()
-        .map(|r| format!("-target={}", r.target_string()))
-        .collect();
+    let mut target_options = Vec::new();
+    let mut seen_targets = HashSet::new();
+
+    for resource in resources {
+        let target = format!("-target={}", resource.target_string());
+        if seen_targets.insert(target.clone()) {
+            target_options.push(target);
+        }
+    }
 
     if target_options.is_empty() {
         return Err(TfocusError::ParseError("No targets specified".to_string()));
@@ -77,9 +83,30 @@ fn create_target_options(resources: &[Resource]) -> Result<Vec<String>> {
 
 /// Gets the working directory from the first resource
 fn get_working_directory(resources: &[Resource]) -> Result<&Path> {
+    if resources.is_empty() {
+        return Err(TfocusError::ParseError("No resources specified".to_string()));
+    }
+
+    let unique_dirs: BTreeSet<_> = resources
+        .iter()
+        .map(|resource| {
+            resource
+                .file_path
+                .parent()
+                .unwrap_or(Path::new("."))
+                .to_path_buf()
+        })
+        .collect();
+
+    if unique_dirs.len() > 1 {
+        return Err(TfocusError::MixedWorkingDirectories(
+            unique_dirs.into_iter().collect(),
+        ));
+    }
+
     resources
         .first()
-        .map(|r| r.file_path.parent().unwrap_or(Path::new(".")))
+        .map(|resource| resource.file_path.parent().unwrap_or(Path::new(".")))
         .ok_or_else(|| TfocusError::ParseError("No resources specified".to_string()))
 }
 
@@ -244,5 +271,62 @@ mod tests {
         let options = create_target_options(&resources).unwrap();
         assert_eq!(options[0], "-target=aws_instance.web");
         assert_eq!(options[1], "-target=aws_instance.app[0]");
+    }
+
+    #[test]
+    fn test_create_target_options_deduplicates() {
+        let resources = vec![
+            Resource {
+                resource_type: "aws_instance".to_string(),
+                name: "web".to_string(),
+                is_module: false,
+                file_path: PathBuf::from("main.tf"),
+                has_count: false,
+                has_for_each: false,
+                index: None,
+            },
+            Resource {
+                resource_type: "aws_instance".to_string(),
+                name: "web".to_string(),
+                is_module: false,
+                file_path: PathBuf::from("main.tf"),
+                has_count: false,
+                has_for_each: false,
+                index: None,
+            },
+        ];
+
+        let options = create_target_options(&resources).unwrap();
+        assert_eq!(options, vec!["-target=aws_instance.web".to_string()]);
+    }
+
+    #[test]
+    fn test_get_working_directory_with_multiple_directories() {
+        let resources = vec![
+            Resource {
+                resource_type: "aws_instance".to_string(),
+                name: "web".to_string(),
+                is_module: false,
+                file_path: PathBuf::from("dir1/main.tf"),
+                has_count: false,
+                has_for_each: false,
+                index: None,
+            },
+            Resource {
+                resource_type: "aws_instance".to_string(),
+                name: "app".to_string(),
+                is_module: false,
+                file_path: PathBuf::from("dir2/main.tf"),
+                has_count: false,
+                has_for_each: false,
+                index: None,
+            },
+        ];
+
+        let result = get_working_directory(&resources);
+        assert!(matches!(
+            result,
+            Err(TfocusError::MixedWorkingDirectories(_))
+        ));
     }
 }
